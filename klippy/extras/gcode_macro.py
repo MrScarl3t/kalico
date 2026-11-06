@@ -191,7 +191,8 @@ class TemplateWrapperPython:
 
         if context is None:
             context = {}
-        exec_globals = dict(context | helpers)
+        # not `context | helpers`: dict union needs Python 3.9, the K1 stock image runs 3.8
+        exec_globals = {**context, **helpers}
         try:
             exec(self.func, exec_globals, {})
         except Exception as e:
