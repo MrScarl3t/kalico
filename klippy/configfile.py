@@ -161,7 +161,11 @@ class ConfigWrapper:
             return (
                 "python",
                 "\n".join(
-                    line.removeprefix(PYTHON_SCRIPT_PREFIX)
+                    # str.removeprefix needs Python 3.9; the K1 stock image
+                    # runs 3.8, so slice the known prefix instead.
+                    line[len(PYTHON_SCRIPT_PREFIX) :]
+                    if line.startswith(PYTHON_SCRIPT_PREFIX)
+                    else line
                     for line in value.splitlines()
                 ),
             )

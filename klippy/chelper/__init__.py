@@ -5,7 +5,7 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import logging
 import os
-
+import shutil
 import cffi
 
 ######################################################################
@@ -339,12 +339,23 @@ def get_ffi():
         ofiles = get_abs_files(srcdir, OTHER_FILES)
         destlib = get_abs_files(srcdir, [DEST_LIB])[0]
         if check_build_code(srcfiles + ofiles + [__file__], destlib):
-            if check_gcc_option(NATIVE_FLAGS):
+            # The K1 series runs a MIPS Creality OS with no gcc, so c_helper.so
+            # is cross-compiled ahead of time and shipped in place. When the
+            # library is already present and no compiler is available, use it
+            # as-is instead of failing; otherwise build as usual.
+            if shutil.which(GCC_CMD) is None and os.path.exists(destlib):
+                logging.info(
+                    "Using prebuilt C code module %s (no compiler found)",
+                    DEST_LIB,
+                )
+            elif check_gcc_option(NATIVE_FLAGS):
                 cmd = "%s %s %s" % (GCC_CMD, NATIVE_FLAGS, COMPILE_ARGS)
+                logging.info("Building C code module %s", DEST_LIB)
+                do_build_code(cmd % (destlib, " ".join(srcfiles)))
             else:
                 cmd = "%s %s" % (GCC_CMD, COMPILE_ARGS)
-            logging.info("Building C code module %s", DEST_LIB)
-            do_build_code(cmd % (destlib, " ".join(srcfiles)))
+                logging.info("Building C code module %s", DEST_LIB)
+                do_build_code(cmd % (destlib, " ".join(srcfiles)))
         FFI_main = cffi.FFI()
         for d in defs_all:
             FFI_main.cdef(d)
