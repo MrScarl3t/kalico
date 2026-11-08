@@ -83,14 +83,105 @@ Status: buildable = yes. Deployable, flashed/installed, boot-ready, Moonraker/Fl
 
 - ~~No MIPS LE toolchain~~ resolved: see Local build evidence.
 - ~~Vendor extras missing~~ resolved: `bl24c16f`, `custom_macro`, `fan_feedback`, `prtouch_v2` all ported (GPLv3).
-- `prtouch_v{1,2}_wrapper.cpython-38-mipsel-linux-gnu.so`: stripped MIPS binaries, not in repo. Must be copied from the printer's own `/usr/share/klipper/klippy/extras/` at deploy time. Cannot be tested without the printer.
-- `fan_feedback.py` requires vendor `fancheck`/`query_fancheck` MCU commands. Only the vendor MCU firmware supports them; Kalico MCU firmware does not. This module will fail at runtime if the MCU is re-flashed with Kalico firmware.
-- Host-to-vendor-MCU protocol compatibility: the vendor MCU dictionaries differ from Kalico MCU binaries. MCU flashing is prohibited until protocol compatibility is established per MCU target.
-- Python 3.8 dependency versions: not yet validated in an isolated MIPS build. The printer's site-packages (`numpy 1.16.4`, `cffi 1.13.1`, `greenlet 0.4.15`, `jinja2 2.11.3`) must be tested against Kalico imports.
-- Offline config-load test: `c_helper.so` has not been loaded by MIPS Python 3.8. Requires either the printer (SSH) or QEMU emulation with the stock rootfs (`emu-stock.sh`).
-- `gen-config.py` in k1-clean still lists `bl24c16f`, `custom_macro`, and `fan_feedback` under `DROP_SECTIONS` (no Kalico module). Now that we have them, update it to keep those sections — but that is in the k1-clean repo, not here.
-- Toolchain archive (`tc.tgz`) provenance unrecorded.
-- Deployment, MCU flashing, service changes, Wi-Fi, reboot, heat, and motion require separate approval.
+- ~~Prtouch wrappers unavailable~~ resolved: copied from printer to `/home/thijs/k1priv/wrappers/`; dlopen verified under MIPS emulation.
+- ~~c_helper.so not loaded by MIPS Python 3.8~~ resolved: 2/2 PASS in MIPS emulation.
+- **MCU_FIRMWARE_PLAN=kalico gate in k1-clean install.sh (line 65)**: globally refuses stage-C install until "probing and MCU targets are verified." This is the single remaining blocker for deployment. Fix: either (a) open the gate in k1-clean after hardware-verifying MCU connection (T169), or (b) a k1-clean code change to allow stage C with stock MCU firmware for K1MAX. Neither is authorized this run.
+- **prtouch calibration placeholders**: bundle-c printer.cfg has unverified `load_cell_probe` calibration values. Klippy will refuse with a config error until probe_calibrate runs on the printer. This is expected behavior, not a bug.
+- **fan_feedback MCU commands**: work with stock MCU firmware (already on printer). Safe.
+- **Toolchain provenance**: `github.com/ballaswag/k1-discovery` release, TOFU sha256. Documented gap.
+- **Deployment, service switch, reboot**: require separate authorization.
+- **MCU flashing**: not needed, not authorized.
+
+## Deployment procedure (ready to execute, pending install.sh gate)
+
+### Pre-deployment checklist
+1. Open k1-clean `install.sh` line 65 gate (or verify T169 K1 Max HW-C1 MCU connection).
+2. Verify no print is active; maintenance window.
+3. Backup current state first: `ssh root@<printer> 'tar czf /tmp/etc_init_d_backup.tgz /etc/init.d/'`.
+4. Confirm stock Klipper/Moonraker/nginx are running and accessible before takeover.
+
+### Install steps (runs ON PRINTER over SSH, writes to /usr/data only)
+```sh
+# 1. Copy bundle, scripts, profile, and evidence to printer
+sshpass -f ~/.k1-ssh-pass/pass scp -o StrictHostKeyChecking=yes -r \
+  /home/thijs/k1priv/bundle-c root@192.168.178.141:/usr/data/k1-clean-incoming/bundle-c
+sshpass -f ~/.k1-ssh-pass/pass scp -o StrictHostKeyChecking=yes -r \
+  /home/thijs/k1-clean/scripts root@192.168.178.141:/usr/data/k1-clean-incoming/scripts
+sshpass -f ~/.k1-ssh-pass/pass scp -o StrictHostKeyChecking=yes \
+  /home/thijs/k1priv/k1max-operator.profile root@192.168.178.141:/usr/data/k1-clean-incoming/
+sshpass -f ~/.k1-ssh-pass/pass scp -o StrictHostKeyChecking=yes \
+  /home/thijs/k1-clean/backups/k1max/20261107T091021Z/{completeness.txt,evidence.txt} \
+  root@192.168.178.141:/usr/data/k1-clean-incoming/
+
+# 2. Dry-run on printer (printer must be MIPS = passes uname check)
+sshpass -f ~/.k1-ssh-pass/pass ssh -o StrictHostKeyChecking=yes root@192.168.178.141 \
+  'sh /usr/data/k1-clean-incoming/scripts/install.sh \
+    --bundle /usr/data/k1-clean-incoming/bundle-c \
+    --profile /usr/data/k1-clean-incoming/k1max-operator.profile \
+    --evidence /usr/data/k1-clean-incoming \
+    --dry-run'
+
+# 3. Install (WRITE — requires deployment authorization)
+sshpass -f ~/.k1-ssh-pass/pass ssh -o StrictHostKeyChecking=yes root@192.168.178.141 \
+  'sh /usr/data/k1-clean-incoming/scripts/install.sh \
+    --bundle /usr/data/k1-clean-incoming/bundle-c \
+    --profile /usr/data/k1-clean-incoming/k1max-operator.profile \
+    --evidence /usr/data/k1-clean-incoming \
+    --yes'
+
+# 4. Activate opencreality (stops Helper Script services, starts ours — NO reboot)
+# This calls takeover.sh which: disables S99start_app, S55klipper_service, S56moonraker_service, S50nginx
+# Verifies each process+port stops before starting our stack.
+sshpass -f ~/.k1-ssh-pass/pass ssh -o StrictHostKeyChecking=yes root@192.168.178.141 \
+  'sh /usr/data/opencreality/bin/takeover.sh activate'
+
+# 5. Verify (allow 30s for startup)
+# Kalico log: ssh ... 'tail -50 /usr/data/printer_data/logs/klippy.log'
+# Fluidd: http://192.168.178.141:4408
+# On failure: restore stock — sh /usr/data/k1-clean-incoming/scripts/uninstall.sh --yes
+```
+
+### Service exclusivity guarantees
+- `S55opencreality` start precheck refuses if `S55klipper_service` is enabled or stock klippy is running.
+- `takeover.sh` stops and verifies each conflict row before starting our services.
+- Rollback: `uninstall.sh` restores all original files and re-enables stock init scripts.
+
+### Boot persistence
+- After install+activate: on next reboot, only `S55opencreality` runs (stock Klipper scripts are in remove.list).
+- To switch back to stock without reboot: run takeover restore (stops our services, restarts stock).
+- Wi-Fi (S43/S44), SSH (S50dropbear), networking (S40), storage (S02mount_mmc_ext4) are NOT changed.
+
+## Live printer inventory (2026-11-08, read-only SSH)
+
+- SSH verified: `root@192.168.178.141`, host key in known_hosts, password-auth, `sshpass -f /home/thijs/.k1-ssh-pass/pass`.
+- Identity: CR-K1 Max, board CR4CU220812S12, structure_version=1, kernel 4.4.94.
+- MCU versions (live, matches profile): `mcu0_120_G32-mcu0_004_000`, `noz0_120_G30-noz0_003_000`, `bed0_110_G21-bed0_004_000`.
+- `/usr/data/opencreality` absent (clean install target).
+- `/usr/data` free: 5.8 GB; MemAvailable: 120 MB.
+- Existing services: stock Klipper (`/usr/share/klipper`), Helper Script Moonraker (`/usr/data/moonraker`), Helper Script nginx on ports 4408+4409, stock Klipper-MCU (`/usr/bin/klipper_mcu`).
+- Port 4408 in use by Helper Script nginx. Our opencreality nginx (same port) requires takeover.
+- Prtouch wrappers copied to `/home/thijs/k1priv/wrappers/` (private, not in repo):
+  - `prtouch_v1_wrapper.cpython-38-mipsel-linux-gnu.so`: `ac2b3bf1…`
+  - `prtouch_v2_wrapper.cpython-38-mipsel-linux-gnu.so`: `2cbcbfed…`
+  - `prtouch_v3_wrapper.cpython-38-mipsel-linux-gnu.so`: `4b87a0ee…`
+- Live `printer.cfg` sha256: `6f9298be…` — matches operator profile and backup. Config unchanged.
+- Fresh backup taken: `/home/thijs/k1-clean/backups/k1max/20261108T160156Z` (`STATUS=COMPLETE`). Port 4408 still in use in this backup (Helper Script nginx).
+
+## Prtouch wrapper test evidence (2/2 PASS, MIPS emulation)
+
+- `prtouch_v2_wrapper.cpython-38-mipsel-linux-gnu.so` dlopen under `qemu-mipsel -cpu P5600` in Creality 1.3.6 stock rootfs: PASS.
+- `fan_feedback.py`, `bl24c16f.py`, `custom_macro.py` AST parse (syntax check only — no runtime printer objects): PASS.
+
+## sim-install dry-run evidence (PASS)
+
+- Bundle: `/home/thijs/k1priv/bundle-c` (k1clean-c--dirty, stage C, Kalico+Moonraker+Fluidd+GuppyScreen).
+- Profile: `/home/thijs/k1priv/k1max-operator.profile` (k1max-operator, validated, K1MAX).
+- Backup: `/home/thijs/k1-clean/backups/k1max/20261107T091021Z`.
+- Sim stock root from live printer: `/home/thijs/k1priv/sim-stock-root/` (lib/ld-*.so, lib/libc.so.6 etc from real printer).
+- `install.sh --dry-run` with MCU_FIRMWARE_PLAN gate bypassed (sim only): PASS.
+- Plan: 394+ files created under `/usr/data/opencreality/`, nginx/guppyscreen/c_helper.so ELF verified against target ABI.
+- Space: 146 MB needed, 5.8 GB available; memory 120 MB / 49 MB minimum — both pass.
+- `--dry-run` note: "Not done by this installer: MCU flashing, starting/stopping services."
 
 ## MIPS emulation test evidence (2/2 PASS)
 
