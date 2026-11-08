@@ -92,6 +92,16 @@ Status: buildable = yes. Deployable, flashed/installed, boot-ready, Moonraker/Fl
 - Toolchain archive (`tc.tgz`) provenance unrecorded.
 - Deployment, MCU flashing, service changes, Wi-Fi, reboot, heat, and motion require separate approval.
 
+## MIPS emulation test evidence (2/2 PASS)
+
+- Source: `72e0d472` (HEAD at time of test).
+- Rootfs: `/home/thijs/k1fw36/root` (stock Creality 1.3.6 squashfs, Python 3.8.2 MIPS).
+- Runtime: `qemu-mipsel -cpu P5600` under `bwrap` (no network, no serial, no printer hardware).
+- `c_helper.so`: `6fba2ff6…` (built from same HEAD, Ingenic toolchain).
+- PASS 1: `chelper.get_ffi()` succeeds; `lib.trapq_alloc()/free()` called; prints `python 3.8.2 mips c_helper ok`.
+- PASS 2: `klippy.py --help` returns `Usage: klippy [options] <config file>` using stock `/usr/share/klippy-env/bin/python`.
+- Not tested: config load with MCUs, vendor extras, full printer.cfg parse.
+
 ## Next actions (ordered)
 
 1. Run `emu-stock.sh` against our branch commit to verify `c_helper.so` loads in the stock MIPS Python 3.8 (need rootfs).
