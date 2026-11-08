@@ -46,9 +46,26 @@
 - The chelper Makefile's object list matches the current `SOURCE_FILES` list (20 objects).
 - `git diff --check` passed before the final documentation additions.
 
+## Local build evidence
+
+Status: buildable = yes. Deployable, flashed/installed, boot-ready, Moonraker/Fluidd functional, physically validated = no.
+
+- Source: `438e41267b5787895b3d6307bbab80a03f718b9f`, built from a `git archive HEAD` export at `/home/thijs/k1build/src` in WSL Ubuntu. The `/mnt/c` worktree is not usable for builds: `core.autocrlf=true` checks out CRLF files and `scripts/find-firmware-extras.sh` then fails.
+- Toolchain: `/home/thijs/k1dl/toolchain/mips-gcc720-glibc229` (Ingenic Linux-Release5.0.2 xburst2, glibc 2.29, gcc 7.2.0). Prefix is `mips-linux-gnu-` but the target is little-endian. `tc.tgz` sha256 `c0415a857c6b384820ec61b8a30c89e528585f3ef07d580fc856e80313c9d2e8`. No published provenance record for the archive yet.
+- Command: `CROSS_PREFIX=/home/thijs/k1dl/toolchain/mips-gcc720-glibc229/bin/mips-linux-gnu- bash scripts/build-k1-host.sh`, exit 0, log `/home/thijs/k1build/build.log`.
+- Artifacts in `/home/thijs/k1build/artifacts` (SHA-256):
+  - `c_helper.so` `6fba2ff61fd68f345af7682aa61a43072e4a127fddd796a2cec205791316dfe1`
+  - `klipper_host_mcu` `0220315f7c1b2115e67f612ca615e1d091161f248fc9711a88dbd19bad25bda4`
+  - `config.host` `8b3df04aadbbc19879abe17f2cf987dbcb9b09a987d0416df5cabffdb1a84318`
+- ELF check: ELF32 little-endian MIPS32r2 o32 NAN2008 (`c_helper.so` flags 0x70001407, `klipper_host_mcu` flags 0x70001405). Highest symbol version GLIBC_2.28; printer has glibc 2.29.
+- Dynamic deps: `c_helper.so` needs libc.so.6; `klipper_host_mcu` needs libutil, librt, libpthread, libc.
+- Emulation: `klipper_host_mcu` starts under `qemu-mipsel -cpu P5600` with the toolchain sysroot and prints usage. QEMU models 24Kc, XBurstR1 and XBurstR2 reject NAN2008. This is not hardware verification.
+- Not done: `c_helper.so` was not loaded by a MIPS Python 3.8 (none available locally). Nothing was run on the printer.
+- The older `c_helper.so` in `/home/thijs/k1em/in/host-a` was built from kalico `e815031`. Six chelper C commits landed since. Do not use it.
+
 ## Remaining blockers
 
-- No verified little-endian MIPS cross-toolchain is installed in WSL. Ubuntu did not expose a candidate for `gcc-mipsel-linux-gnu` in the checked package index. Do not substitute the big-endian `mips-linux-gnu-` compiler.
+- ~~No MIPS LE toolchain~~ resolved for building: see Local build evidence. Archive provenance still unrecorded.
 - Current Kalico still lacks `prtouch_v2`, its native wrappers, `bl24c16f`, `fan_feedback`, and `custom_macro`. These cannot be removed or bypassed to obtain `ready`.
 - Host-to-vendor-MCU protocol compatibility is not established. The vendor MCU dictionaries and fork binaries differ materially.
 - Exact dependency pins that can install on Python 3.8 and run on MIPS remain to be validated in an isolated build environment.

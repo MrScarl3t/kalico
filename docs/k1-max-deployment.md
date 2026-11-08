@@ -9,7 +9,9 @@ This document describes a future deployment only. The preparation work did not d
 - Keep a second recovery path available before any printer write: physical access plus a verified vendor recovery image or serial procedure. The existing OTA filename is evidence that an image exists, not proof that it is a usable recovery image.
 - Do not use the fork's `mcu0`, `nozzle`, or `bed` binaries on this printer. Their extracted protocol dictionaries differ from the installed vendor MCU dictionaries.
 - Do not proceed until `prtouch_v2`, its native wrappers, `bl24c16f`, `fan_feedback`, and `custom_macro` have a reviewed Kalico implementation or an explicitly tested vendor-compatible integration.
-- Do not proceed until an ELF32 little-endian MIPS32r2/o32/NAN2008 toolchain and a compatible glibc/sysroot are pinned and the offline build passes.
+- A suitable toolchain is identified (Ingenic xburst2 glibc 2.29 gcc 7.2.0, little-endian despite the `mips-linux-gnu-` prefix) and the offline build passes. See `TASKS.md`, "Local build evidence". The toolchain archive has no recorded provenance yet; record its source before relying on it.
+- Build from a `git archive` export or an LF checkout, never from a CRLF worktree (`core.autocrlf=true` breaks `scripts/find-firmware-extras.sh` under WSL).
+- Do not use any `c_helper.so` built from an older revision. Rebuild from the revision being deployed and record its SHA-256.
 
 ## Staged deployment proposal
 
