@@ -1,0 +1,72 @@
+#!/bin/sh
+# S55oc_kalico - opencreality: Kalico host process.
+#
+# Replaces S55klipper_service (disabled via 'opencreality mode opencreality').
+# Uses the same interpreter, config path, log path, and UDS as the stock
+# service so that Moonraker and GuppyScreen need no reconfiguration.
+# Unlike the stock script it does NOT copy ROM configs — that would overwrite
+# a Kalico-specific printer.cfg after an OTA.
+#
+# Layout (see /usr/data/opencreality/README):
+#   Kalico source:    /usr/data/opencreality/kalico/
+#   c_helper.so:      /usr/data/opencreality/kalico/klippy/chelper/c_helper.so
+#   Interpreter:      /usr/share/klippy-env/bin/python   (stock venv, Python 3.8)
+#   Config:           /usr/data/printer_data/config/printer.cfg
+#   Log:              /usr/data/printer_data/logs/klippy.log
+#   Socket:           /tmp/klippy_uds
+#
+# SAFETY CHECKS:
+#   - Refuses to start if S55klipper_service is still enabled (would race).
+#   - Refuses to start if stock klippy.py is still running.
+#   - Refuses to start if printer.cfg is missing.
+
+OC_ROOT=/usr/data/opencreality
+DATA=/usr/data/printer_data
+PROG=/usr/share/klippy-env/bin/python
+SCRIPT=$OC_ROOT/kalico/klippy/klippy.py
+ARGS="$SCRIPT $DATA/config/printer.cfg -l $DATA/logs/klippy.log -a /tmp/klippy_uds"
+PID_FILE=/var/run/oc_kalico.pid
+HOME=/root; export HOME
+
+_precheck() {
+    if [ -f /etc/init.d/S55klipper_service ]; then
+        echo "oc_kalico: S55klipper_service is still enabled; run 'opencreality mode opencreality' first" >&2
+        return 1
+    fi
+    if grep -ql "klipper/klippy/klippy.py" /proc/*/cmdline 2>/dev/null; then
+        echo "oc_kalico: stock klippy is still running (disabled but not stopped); reboot required" >&2
+        return 1
+    fi
+    [ -f "$DATA/config/printer.cfg" ] || {
+        echo "oc_kalico: $DATA/config/printer.cfg missing" >&2
+        return 1
+    }
+    [ -f "$SCRIPT" ] || {
+        echo "oc_kalico: Kalico not installed at $SCRIPT" >&2
+        return 1
+    }
+    mkdir -p "$DATA/logs" "$DATA/gcodes"
+}
+
+start() {
+    _precheck || return 1
+    # shellcheck disable=SC2086  # ARGS intentionally word-splits the argument list
+    start-stop-daemon -S -q -b -m -p "$PID_FILE" --exec "$PROG" -- $ARGS
+}
+
+stop() {
+    start-stop-daemon -K -q -p "$PID_FILE"
+}
+
+restart() {
+    stop
+    sleep 1
+    start
+}
+
+case "$1" in
+    start)   start;;
+    stop)    stop;;
+    restart|reload) restart;;
+    *) echo "Usage: $0 {start|stop|restart}"; exit 1;;
+esac

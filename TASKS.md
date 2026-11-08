@@ -63,14 +63,39 @@ Status: buildable = yes. Deployable, flashed/installed, boot-ready, Moonraker/Fl
 - Not done: `c_helper.so` was not loaded by a MIPS Python 3.8 (none available locally). Nothing was run on the printer.
 - The older `c_helper.so` in `/home/thijs/k1em/in/host-a` was built from kalico `e815031`. Six chelper C commits landed since. Do not use it.
 
+## Branch contents (k1_max_kalico, as of milestone 1)
+
+- `klippy/compat.py`, `klippy/configfile.py`, `klippy/extras/gcode_macro.py`, `pyproject.toml`: Python 3.8 compatibility patches.
+- `klippy/queuelogger.py`: rollover fix from upstream k1-port.
+- `klippy/chelper/Makefile`, `klippy/chelper/__init__.py`: cross-compile path for MIPS host.
+- `.config.host`: Linux host MCU Kconfig.
+- `scripts/build-k1-host.sh`: ELF-checked cross-build wrapper.
+- `klippy/extras/virtual_pins.py`: virtual pin MCU shim for sensorless homing.
+- `klippy/extras/bl24c16f.py`: BL24C16F EEPROM I2C (GPLv3, Callahan/Creality).
+- `klippy/extras/custom_macro.py`: CX_* gcode commands (GPLv3, Lord/Creality). REVIEW note: ACCEL_TO_DECEL in CX_PRINT_DRAW_ONE_LINE.
+- `klippy/extras/fan_feedback.py`: fan tachometer (GPLv3, Creality). Requires vendor `fancheck` MCU command set.
+- `klippy/extras/prtouch_v2.py`: probe wrapper (GPLv3, Creality). Requires `prtouch_v{1,2}_wrapper.cpython-38-mipsel-linux-gnu.so` at runtime.
+- `scripts/opencreality.sh`: mode selector (`opencreality mode opencreality|stock`, `opencreality status`).
+- `scripts/init.d/S55oc_kalico`, `S56oc_moonraker`, `S57oc_web`: init scripts for the opencreality runtime.
+- `docs/k1-max-deployment.md`: deployment runbook with preconditions, staged plan, and rollback.
+
 ## Remaining blockers
 
-- ~~No MIPS LE toolchain~~ resolved for building: see Local build evidence. Archive provenance still unrecorded.
-- Current Kalico still lacks `prtouch_v2`, its native wrappers, `bl24c16f`, `fan_feedback`, and `custom_macro`. These cannot be removed or bypassed to obtain `ready`.
-- Host-to-vendor-MCU protocol compatibility is not established. The vendor MCU dictionaries and fork binaries differ materially.
-- Exact dependency pins that can install on Python 3.8 and run on MIPS remain to be validated in an isolated build environment.
-- Deployment, MCU flashing, service changes, Wi-Fi changes, reboot, heat, and motion remain out of scope.
+- ~~No MIPS LE toolchain~~ resolved: see Local build evidence.
+- ~~Vendor extras missing~~ resolved: `bl24c16f`, `custom_macro`, `fan_feedback`, `prtouch_v2` all ported (GPLv3).
+- `prtouch_v{1,2}_wrapper.cpython-38-mipsel-linux-gnu.so`: stripped MIPS binaries, not in repo. Must be copied from the printer's own `/usr/share/klipper/klippy/extras/` at deploy time. Cannot be tested without the printer.
+- `fan_feedback.py` requires vendor `fancheck`/`query_fancheck` MCU commands. Only the vendor MCU firmware supports them; Kalico MCU firmware does not. This module will fail at runtime if the MCU is re-flashed with Kalico firmware.
+- Host-to-vendor-MCU protocol compatibility: the vendor MCU dictionaries differ from Kalico MCU binaries. MCU flashing is prohibited until protocol compatibility is established per MCU target.
+- Python 3.8 dependency versions: not yet validated in an isolated MIPS build. The printer's site-packages (`numpy 1.16.4`, `cffi 1.13.1`, `greenlet 0.4.15`, `jinja2 2.11.3`) must be tested against Kalico imports.
+- Offline config-load test: `c_helper.so` has not been loaded by MIPS Python 3.8. Requires either the printer (SSH) or QEMU emulation with the stock rootfs (`emu-stock.sh`).
+- `gen-config.py` in k1-clean still lists `bl24c16f`, `custom_macro`, and `fan_feedback` under `DROP_SECTIONS` (no Kalico module). Now that we have them, update it to keep those sections — but that is in the k1-clean repo, not here.
+- Toolchain archive (`tc.tgz`) provenance unrecorded.
+- Deployment, MCU flashing, service changes, Wi-Fi, reboot, heat, and motion require separate approval.
 
-## Next action
+## Next actions (ordered)
 
-Choose a verified little-endian MIPS toolchain/sysroot, port or obtain the vendor probing modules with source/provenance, and run an offline host build and config-load test. Stop before printer deployment and require a separate deployment decision.
+1. Run `emu-stock.sh` against our branch commit to verify `c_helper.so` loads in the stock MIPS Python 3.8 (need rootfs).
+2. Update k1-clean `gen-config.py` `DROP_SECTIONS` to remove `bl24c16f`, `custom_macro`, `fan_feedback` and test config generation.
+3. Validate Moonraker Python 3.8 wheel compatibility against the stock site-packages.
+4. Fill in the k1max hardware profile from the backup and generate a candidate config.
+5. Deployment approval: separate decision required before any printer write.

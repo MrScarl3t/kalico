@@ -1,0 +1,58 @@
+#!/bin/sh
+# S56oc_moonraker - opencreality: Moonraker API server.
+#
+# Uses the stock Python 3.8 interpreter with Moonraker's pure-Python
+# wheels installed in /usr/data/opencreality/moonraker-pylib and
+# Moonraker's source in /usr/data/opencreality/moonraker/.
+#
+# Moonraker is configured via /usr/data/printer_data/config/moonraker.conf.
+# It binds only to 127.0.0.1 — nginx (S57oc_web) proxies it to the LAN.
+#
+# Layout:
+#   Moonraker source:  /usr/data/opencreality/moonraker/
+#   Python wheels:     /usr/data/opencreality/moonraker-pylib/
+#   Interpreter:       /usr/bin/python3  (stock Python 3.8)
+#   Config:            /usr/data/printer_data/config/moonraker.conf
+#   Log:               /usr/data/printer_data/logs/moonraker.log
+#   TMPDIR:            /usr/data/opencreality/tmp  (on /usr/data, not RAM)
+
+OC_ROOT=/usr/data/opencreality
+DATA=/usr/data/printer_data
+PROG=/usr/bin/python3
+SCRIPT=$OC_ROOT/moonraker/moonraker/moonraker.py
+MOONRAKER_TMP=$OC_ROOT/tmp
+PYTHONPATH=$OC_ROOT/moonraker-pylib; export PYTHONPATH
+PID_FILE=/var/run/oc_moonraker.pid
+
+start() {
+    [ -f "$DATA/config/moonraker.conf" ] || {
+        echo "oc_moonraker: $DATA/config/moonraker.conf missing" >&2
+        return 1
+    }
+    [ -f "$SCRIPT" ] || {
+        echo "oc_moonraker: Moonraker not installed at $SCRIPT" >&2
+        return 1
+    }
+    rm -rf "$MOONRAKER_TMP" && mkdir -p "$MOONRAKER_TMP"
+    export TMPDIR=$MOONRAKER_TMP
+    mkdir -p "$DATA/logs"
+    start-stop-daemon -S -q -b -m -p "$PID_FILE" --exec "$PROG" -- \
+        "$SCRIPT" -d "$DATA" -l "$DATA/logs/moonraker.log"
+}
+
+stop() {
+    start-stop-daemon -K -q -p "$PID_FILE"
+}
+
+restart() {
+    stop
+    sleep 1
+    start
+}
+
+case "$1" in
+    start)   start;;
+    stop)    stop;;
+    restart|reload) restart;;
+    *) echo "Usage: $0 {start|stop|restart}"; exit 1;;
+esac

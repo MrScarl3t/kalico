@@ -1,0 +1,51 @@
+#!/bin/sh
+# S57oc_web - opencreality: nginx serving Fluidd on port 4408.
+#
+# Serves Fluidd's static files from /usr/data/opencreality/fluidd/ and
+# proxies Moonraker's API.  nginx is the MIPS cross-compiled binary from
+# the opencreality bundle; stock nginx on port 80 is unaffected.
+#
+# Layout:
+#   nginx binary:  /usr/data/opencreality/web/nginx
+#   nginx config:  /usr/data/opencreality/web/nginx.conf
+#   Fluidd files:  /usr/data/opencreality/fluidd/
+#   mime.types:    /usr/data/opencreality/web/mime.types
+#   Temp dirs:     /tmp/oc-web/{body,proxy}  (tmpfs)
+#
+# Port 4408 was chosen to not conflict with stock port 80 or camera port 8080.
+# Verify /usr/data/opencreality/web/nginx.conf for your LAN subnet.
+
+OC_ROOT=/usr/data/opencreality
+PROG=$OC_ROOT/web/nginx
+CONF=$OC_ROOT/web/nginx.conf
+PID_FILE=/var/run/oc_nginx.pid
+
+start() {
+    [ -x "$PROG" ] || {
+        echo "oc_web: nginx not installed at $PROG" >&2
+        return 1
+    }
+    [ -f "$CONF" ] || {
+        echo "oc_web: nginx.conf missing at $CONF" >&2
+        return 1
+    }
+    mkdir -p /tmp/oc-web/body /tmp/oc-web/proxy
+    start-stop-daemon -S -q -b -m -p "$PID_FILE" --exec "$PROG" -- -c "$CONF"
+}
+
+stop() {
+    start-stop-daemon -K -q -p "$PID_FILE"
+}
+
+restart() {
+    stop
+    sleep 1
+    start
+}
+
+case "$1" in
+    start)   start;;
+    stop)    stop;;
+    restart|reload) restart;;
+    *) echo "Usage: $0 {start|stop|restart}"; exit 1;;
+esac
