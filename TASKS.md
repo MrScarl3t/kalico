@@ -79,18 +79,60 @@ Status: buildable = yes. Deployable, flashed/installed, boot-ready, Moonraker/Fl
 - `scripts/init.d/S55oc_kalico`, `S56oc_moonraker`, `S57oc_web`: init scripts for the opencreality runtime.
 - `docs/k1-max-deployment.md`: deployment runbook with preconditions, staged plan, and rollback.
 
+## Deployment execution log (2026-11-08)
+
+### Stage: INSTALLED, TAKEOVER COMPLETE, KALICO STARTED, SSH UNRESPONSIVE
+
+**What happened:**
+1. Bundle `k1clean-c--dirty` installed to `/usr/data/opencreality/` — **COMPLETE** (transaction `20261108T173345Z-8610`, 394+ files, SHA256SUMS verified on-printer).
+2. `takeover.sh activate` ran — **COMPLETE**: disabled S99start_app, S56moonraker_service, S50nginx, S55klipper_service. Boot entry `/etc/init.d/S55opencreality` installed.
+3. `S55k1clean_kalico` init script patched to remove bed MCU firmware check (stock-host plan: `mcu_settled kalico` check removed).
+4. `[load_cell_probe]` section commented out in `/usr/data/opencreality/printer_data/config/printer.cfg` (stock bed MCU cannot service hx711s commands).
+5. `sh /usr/data/opencreality/init/S55k1clean_kalico start` executed — command backgrounded via `start-stop-daemon -b`.
+6. SSH became unreachable immediately after (Connection reset by peer). Printer still pings at <10ms but sshd is resetting connections. This has persisted for 10+ minutes.
+
+**Probable cause**: OOM event. When Kalico started (estimated 80-100MB peak RSS on 32-bit MIPS) while other processes were still winding down, the system ran out of memory and the OOM killer may have terminated sshd or another critical daemon. Klippy.log was not retrieved before SSH became unresponsive.
+
+**Current state on printer:**
+- `/usr/data/opencreality/` — fully installed, intact
+- `/etc/init.d/S55opencreality` — installed (will start our stack on reboot)
+- Stock services: S99start_app, S55klipper_service, S56moonraker_service, S50nginx — all DISABLED
+- Our services: started via manual command, current state unknown (likely crashed/OOM)
+- SSH daemon: unresponsive (sshd connection reset)
+- Network: ping responsive at <10ms
+
+**Required action**: Manual physical reboot of the printer.
+
+**Expected post-reboot behavior:**
+- S50dropbear (SSH) starts cleanly with fresh memory
+- S55opencreality runs our init scripts in order (S55k1clean_kalico, S56k1clean_moonraker, S57k1clean_web)
+- Kalico connects to MCUs (mcu, nozzle_mcu, leveling_mcu) — no hx711s commands (load_cell_probe disabled)
+- Moonraker binds to 127.0.0.1:7125 with `/tmp/opencreality_klippy_uds`
+- nginx serves Fluidd on port 4408
+
+**Rollback if startup fails:**
+```sh
+# From SSH after reboot:
+sh /usr/data/opencreality/bin/takeover.sh restore --yes
+# Then reboot again to restore stock services
+```
+**Or from the k1-clean-state journal:**
+```sh
+sh /usr/data/k1-clean-incoming/scripts/uninstall.sh --yes
+```
+
 ## Remaining blockers
 
-- ~~No MIPS LE toolchain~~ resolved: see Local build evidence.
-- ~~Vendor extras missing~~ resolved: `bl24c16f`, `custom_macro`, `fan_feedback`, `prtouch_v2` all ported (GPLv3).
-- ~~Prtouch wrappers unavailable~~ resolved: copied from printer to `/home/thijs/k1priv/wrappers/`; dlopen verified under MIPS emulation.
-- ~~c_helper.so not loaded by MIPS Python 3.8~~ resolved: 2/2 PASS in MIPS emulation.
-- **MCU_FIRMWARE_PLAN=kalico gate in k1-clean install.sh (line 65)**: globally refuses stage-C install until "probing and MCU targets are verified." This is the single remaining blocker for deployment. Fix: either (a) open the gate in k1-clean after hardware-verifying MCU connection (T169), or (b) a k1-clean code change to allow stage C with stock MCU firmware for K1MAX. Neither is authorized this run.
-- **prtouch calibration placeholders**: bundle-c printer.cfg has unverified `load_cell_probe` calibration values. Klippy will refuse with a config error until probe_calibrate runs on the printer. This is expected behavior, not a bug.
-- **fan_feedback MCU commands**: work with stock MCU firmware (already on printer). Safe.
-- **Toolchain provenance**: `github.com/ballaswag/k1-discovery` release, TOFU sha256. Documented gap.
-- **Deployment, service switch, reboot**: require separate authorization.
-- **MCU flashing**: not needed, not authorized.
+- ~~MCU_FIRMWARE_PLAN=kalico gate~~ resolved: new `stock-host` plan added to k1-clean.
+- ~~install.sh gate~~ resolved: dry-run PASS on printer.
+- ~~Installation~~ resolved: COMPLETE on printer.
+- ~~Takeover~~ resolved: stock services disabled, boot entry installed.
+- **Manual reboot required**: sshd is unresponsive. The printer must be rebooted to bring SSH back and start the OpenCreality stack cleanly.
+- **After reboot**: Verify Kalico MCU connection, Moonraker ready, Fluidd live on port 4408.
+- **Post-reboot check**: Retrieve `/usr/data/opencreality/printer_data/logs/klippy.log` to verify MCU connections.
+- **load_cell_probe**: disabled in deployed config. Probing/bed leveling not available until Kalico bed MCU firmware is installed (T168, separate authorization).
+
+
 
 ## Deployment procedure (ready to execute, pending install.sh gate)
 
