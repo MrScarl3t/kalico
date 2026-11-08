@@ -79,6 +79,30 @@ Status: buildable = yes. Deployable, flashed/installed, boot-ready, Moonraker/Fl
 - `scripts/init.d/S55oc_kalico`, `S56oc_moonraker`, `S57oc_web`: init scripts for the opencreality runtime.
 - `docs/k1-max-deployment.md`: deployment runbook with preconditions, staged plan, and rollback.
 
+## Z safety status: UNSAFE / UNVERIFIED (2026-11-08)
+
+Z homing, probing, bed mesh and printing are UNSAFE/UNVERIFIED. Nothing has been physically validated.
+
+Evidence (static, nothing actuated for it):
+- Deployed `[stepper_z]` uses `endstop_pin: tmc2209_stepper_z:virtual_endstop`; live configfile shows `driver_sgthrs: 0`. The stock backup has the same values (Z `driver_SGTHRS: 0`, X/Y 75).
+- Stock reaches Z contact through Creality's patched `extras/homing.py`: with `[prtouch_v2]` present, `G28 Z` calls `probe.mcu_probe.run_G28_Z()` and probing calls `run_G29_Z()`. Kalico has no such hook, so Kalico's `G28 Z` has no contact detection except the TMC virtual endstop.
+- Not proven: that SGTHRS 0 never triggers on this hardware. That is inferred from TMC2209 behaviour. The klippy log of the reported collision was not preserved; the oldest log available starts after the reboot.
+- `load_cell_probe` (hx711s) cannot be enabled against the stock leveling MCU as is: Kalico sends `query_hx711s oid rest_ticks` and looks up `query_hx711s_status`; the stock dictionary has `query_hx711s oid times_read` and no `query_hx711s_status`.
+
+Mitigation: macro `_Z_CONTACT_UNVERIFIED` raises before any heating or motion; `_HOME_Z`, `ACCURATE_G28`, `G29`, `START_PRINT` call it first. Deployed `k1clean-macros.cfg` sha256 `8fbbdf46…`; k1-clean template commit `92663b2` (local `main`, not pushed). After RESTART, calling the guard and `_HOME_Z` raised the error with no motion and heater targets 0. A bare `G28 Z` after the fix was deliberately not sent; it should reach `_HOME_Z` through `homing_override`, untested. The guard is macro-level only: it does not block `FORCE_MOVE`, `SET_KINEMATIC_POSITION` or raw `G1`.
+
+## Process error in this session (disclosed)
+My first guard was named `_K1CLEAN_Z_UNSAFE`; Klippy parsed it as `_K1` (Unknown command, logged only), so it guarded nothing. Verification commands `G28 Z`, `ACCURATE_G28`, `G29`, `_HOME_Z` were sent to the live printer and ran: XY homing macros (`homed_axes xy`, position 296.5/8.0), `FORCE_MOVE stepper_z` +3 mm, `stepper_y` -14/+7, heater targets 140/50 °C reached (log lines 8530-8641 of the saved incident log), then `TURN_OFF_HEATERS` (extruder 139.7 °C, bed 49.4 °C right after). No Z contact-homing move occurred (`Must home axis first`). This broke the no-G28/heating/motion rule. Klippy was restarted afterwards (`homed_axes` empty). Z may sit about 3 mm higher than before: check visually. The guard was renamed (no digit in the name) and a test asserts that.
+
+## Corrections to earlier entries
+- `gcode_shell_command` IS present in the deployed Kalico (klippy log shows `extras/gcode_shell_command.py` handling `RUN_SHELL_COMMAND`). My earlier "unavailable" came from probing a wrong command name. `migrated/camera-settings.cfg` runs `v4l2-ctl` through it from a `delayed_gcode` (`initial_duration: 2`) at every Klippy start. One session logged `Internal error on command "RUN_SHELL_COMMAND"` (`greenlet.GreenletExit`) with `CAM_BRIGHTNESS` errors; cause not established. This is an unreviewed startup side effect and must not be used as a remote shell.
+- "OOM / stale PID" as the SSH cause is unproven; 144 MB was free.
+
+## Access status
+- SSH: port 22 refused; port 4408 open. Stock `S50dropbear` (backup sha `e72ec4f2…`) runs `/usr/sbin/dropbear -R`, pid `/var/run/dropbear.pid`, host keys in overlay `/etc/dropbear`. Our scripts and takeover table do not touch it. Cause unknown; Moonraker file roots are limited to config/logs/gcodes, so `/etc` and the process list are not readable. No verified USB recovery route yet; none will be proposed until one is found in vendor documentation.
+- Commands from Fluidd reach Klippy (unknown commands are logged). GuppyScreen input is not diagnosed: its log shows only the websocket connect to 127.0.0.1:7125.
+- Not started: Fluidd software-update tab, installation/recovery guides, release bundle, draft release.
+
 ## Recovery and missing-include fix (2026-11-08)
 
 ### Access result
