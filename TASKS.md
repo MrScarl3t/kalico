@@ -79,9 +79,32 @@ Status: buildable = yes. Deployable, flashed/installed, boot-ready, Moonraker/Fl
 - `scripts/init.d/S55oc_kalico`, `S56oc_moonraker`, `S57oc_web`: init scripts for the opencreality runtime.
 - `docs/k1-max-deployment.md`: deployment runbook with preconditions, staged plan, and rollback.
 
-## Deployment execution log (2026-11-08)
+## Recovery and missing-include fix (2026-11-08)
 
-### Stage: INSTALLED, TAKEOVER COMPLETE, KALICO STARTED, SSH UNRESPONSIVE
+### Access result
+- SSH port 22: actively refused (not listening). Dropbear did not start after reboot.
+- HTTP port 4408: **OPEN** — nginx/Fluidd serves 200 OK.
+- Moonraker API: **LIVE** at `http://192.168.178.141:4408/server/info`.
+- Klippy state after fix: **ready** (`klippy_state: ready`).
+- Memory: 144 MB available (healthy — OOM was a transient startup spike, not a persistent condition).
+
+### Missing-include root cause
+`make-bundle.sh` copies `$PCFG/*.cfg` (root files) but skips the `migrated/` subdirectory that `gen-config.py` produces. The bundle's `printer.cfg` references `[include migrated/camera-settings.cfg]` and three other `migrated/*.cfg` files, but none ship with the bundle. The gen-config output at `/home/thijs/k1priv/t210/out/` had the correct `migrated/` directory; make-bundle didn't include it.
+
+### Fix applied
+1. **Live (printer)**: uploaded 4 missing files via Moonraker file upload API:
+   - `migrated/camera-settings.cfg` (97a8aad4…) — camera v4l2-ctl controls, delayed_gcode LOAD_CAM_SETTINGS with `initial_duration: 2` (camera-only, no motion/heat)
+   - `migrated/M600-support.cfg` (49d03972…)
+   - `migrated/fans-control.cfg` (e87c684a…)
+   - `migrated/useful-macros.cfg` (bb7b8517… — gen-config version with blocked-workflow annotations)
+   Issued `RESTART`; Klippy went to `ready` immediately.
+
+2. **Root cause (k1-clean)**: `build/make-bundle.sh` patched to `cp -R "$PCFG/migrated"` after the root `.cfg` copy. `tests/test_make_bundle.sh` patched: fixture adds `migrated/` subdir and test asserts it's in SHA256SUMS. 159/159 tests pass. Committed to k1-clean `main` as `2884e16`.
+
+### SSH (dropbear) not listening
+S50dropbear init script was in PROTECTED list (takeover never disables it). SSH is actively refused after reboot — sshd didn't start. Probable cause: the OOM event during the first manual Kalico start (before the reboot) may have corrupted the dropbear PID file or the sshd process died and its PID file prevented restart on reboot. The printer is fully operational via HTTP (port 4408) and GuppyScreen. This is a blocker for SSH-based maintenance.
+
+
 
 **What happened:**
 1. Bundle `k1clean-c--dirty` installed to `/usr/data/opencreality/` — **COMPLETE** (transaction `20261108T173345Z-8610`, 394+ files, SHA256SUMS verified on-printer).
