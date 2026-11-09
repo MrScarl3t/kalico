@@ -103,7 +103,19 @@ My first guard was named `_K1CLEAN_Z_UNSAFE`; Klippy parsed it as `_K1` (Unknown
 - Commands from Fluidd reach Klippy (unknown commands are logged). GuppyScreen input is not diagnosed: its log shows only the websocket connect to 127.0.0.1:7125.
 - Not started: Fluidd software-update tab, installation/recovery guides, release bundle, draft release.
 
-## Recovery and missing-include fix (2026-11-08)
+## SSH root cause and installer fix (2026-11-08)
+
+**Root cause (proven):** The stock Creality ROM ships `S50dropbear` (`e72ec4f2`) with the `start()` call inside `case start)` commented out (`#  	start`). Confirmed identical in the backup archive (`software-etc_init.d.tar`) and the squashfs ROM at `/home/thijs/k1fw36/root`. SSH has never auto-started from this script on a factory device. Previous SSH sessions worked because the Helper Script's GuppyScreen installer replaces this file with a one-line-different patched version (`248140e7`). That replacement was not on disk when our backup was taken; the stock commented-out version was there instead. Neither our install.sh nor takeover.sh touches `S50dropbear`.
+
+**Live fix (2026-11-08, via `gcode_shell_command`):** Patched `/etc/init.d/S50dropbear` from sha `e72ec4f2` to `248140e7` (uncomment `start` call). Dropbear ran; SSH authenticated on first attempt.
+
+**Installer fix:** k1-clean `scripts/install.sh` now patches `S50dropbear` as a post-install step using the journal (original saved; uninstall.sh restores it). Reported in `--dry-run`. Two regression tests. 162/162 pass. Committed to k1-clean `main` as `a8a2b4d`.
+
+**Persistence note:** The patched `S50dropbear` is on the writable overlay. It should persist across reboots. Reboot persistence is not yet separately verified.
+
+**Current access (2026-11-08 ~22:00):** Printer went offline (both ports closed, ping timeout). Likely powered off. No action required on our side; the installer fix is already committed.
+
+
 
 ### Access result
 - SSH port 22: actively refused (not listening). Dropbear did not start after reboot.
